@@ -1,0 +1,16 @@
+# OpenVibe Studio
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+venv/
+venv3/
+.env.local
+.env.*.local
+*.log
+*.db
+*.sqlite
+*.sqlite3
+*.json
+
