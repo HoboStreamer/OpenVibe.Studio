@@ -1,4 +1,4 @@
-# OpenVibe Manager
+# OpenVibe Studio
 
 A lightweight Python GUI for managing Hobo local services and OpenVibe projects such as `OpenVibe.Tools`, `OpenVibe.Live`, and `OpenVibe.Games`.
 
