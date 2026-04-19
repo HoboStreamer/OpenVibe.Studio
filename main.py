@@ -3,12 +3,11 @@
 
 This tool lets you register repository directories, configure service commands,
 inspect and edit .env files, view and export logs, and restart services
-via a modern tkinter GUI and a WebSocket control socket.
+via a modern tkinter GUI and a local HTTP JSON control API.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import subprocess
@@ -23,11 +22,12 @@ import psutil
 import requests
 import ttkbootstrap as tb
 import tkinter as tk
-import websockets
 from dotenv import dotenv_values
 from rich import print as rprint
 from tkinter import filedialog, messagebox, simpledialog
 from ttkbootstrap.widgets.scrolled import ScrolledText
+
+from control_api import LocalControlHTTPServer
 
 try:
     from playwright.sync_api import Error as PlaywrightError, Page, Playwright, sync_playwright
@@ -340,6 +340,22 @@ class OpenVibeBackend:
         except Exception as exc:
             return f"error: {exc}"
 
+    def wait_until_healthy(self, service: ServiceDefinition, timeout: int = 30, interval: float = 1.0) -> Dict[str, str]:
+        if not service.health_url:
+            return {"status": "error", "message": "no health url configured"}
+        deadline = time.time() + timeout
+        last_status = ""
+        while time.time() <= deadline:
+            try:
+                response = requests.get(service.health_url, timeout=3)
+                last_status = f"{response.status_code} {response.reason}"
+                if response.status_code == 200:
+                    return {"status": "healthy", "health": last_status}
+            except Exception as exc:
+                last_status = f"error: {exc}"
+            time.sleep(interval)
+        return {"status": "timeout", "health": last_status}
+
     def load_env_content(self, service: ServiceDefinition) -> str:
         env_path = service.resolved_env_path()
         if env_path and env_path.exists():
@@ -456,73 +472,8 @@ class OpenVibeBackend:
         return candidates
 
 
-class ControlSocketServer:
-    def __init__(self, backend: OpenVibeBackend) -> None:
-        self.backend = backend
-        self.thread: Optional[threading.Thread] = None
-        self.loop: Optional[asyncio.AbstractEventLoop] = None
-        self.server: Optional[asyncio.AbstractServer] = None
-
-    def start(self) -> None:
-        if self.thread and self.thread.is_alive():
-            return
-        self.thread = threading.Thread(target=self._run_loop, daemon=True)
-        self.thread.start()
-
-    def stop(self) -> None:
-        if self.loop and self.loop.is_running():
-            self.loop.call_soon_threadsafe(self.loop.stop)
-
-    def _run_loop(self) -> None:
-        self.loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self.loop)
-        try:
-            self.loop.run_until_complete(self._serve())
-        except Exception as exc:
-            rprint(f"[red]Control socket failed: {exc}[/red]")
-
-    async def _serve(self) -> None:
-        async with websockets.serve(self._handler, CONTROL_HOST, CONTROL_PORT):
-            await asyncio.Future()
-
-    async def _handler(self, websocket, path):
-        async for message in websocket:
-            try:
-                payload = json.loads(message)
-            except json.JSONDecodeError:
-                await websocket.send(json.dumps({"error": "invalid json"}))
-                continue
-            response = await self._process_payload(payload)
-            await websocket.send(json.dumps(response))
-
-    async def _process_payload(self, payload: dict) -> dict:
-        action = payload.get("action")
-        if action == "status":
-            return {"status": {name: self.backend.service_status(service) for name, service in self.backend.services.items()}}
-        if action in {"start", "stop", "restart"}:
-            service_name = payload.get("service")
-            service = self.backend.services.get(service_name)
-            if not service:
-                return {"error": "service not found"}
-            if action == "start":
-                result = self.backend.start_service(service)
-            elif action == "stop":
-                result = self.backend.stop_service(service)
-            else:
-                result = self.backend.restart_service(service)
-            return {"result": result}
-        if action == "tail":
-            service_name = payload.get("service")
-            lines = int(payload.get("lines", 100))
-            service = self.backend.services.get(service_name)
-            if not service:
-                return {"error": "service not found"}
-            return {"log": self.backend.read_log(service, lines)}
-        return {"error": "unknown action"}
-
-
 class OpenVibeGUI:
-    def __init__(self, backend: OpenVibeBackend, control_server: ControlSocketServer) -> None:
+    def __init__(self, backend: OpenVibeBackend, control_server: LocalControlHTTPServer) -> None:
         self.backend = backend
         self.control_server = control_server
         self.root = tb.Window("OpenVibe Studio", themename="darkly")
@@ -625,8 +576,8 @@ class OpenVibeGUI:
         tb.Button(frame, text="Copy", command=self._copy_log).grid(row=1, column=3, padx=4)
         tb.Button(frame, text="Export", command=self._export_log).grid(row=1, column=4, padx=4)
         tb.Button(frame, text="Clear", command=self._clear_log).grid(row=1, column=5, padx=4)
-        tb.Button(frame, text="Socket start", command=self._start_socket).grid(row=2, column=0, padx=4, pady=8)
-        tb.Button(frame, text="Socket stop", command=self._stop_socket).grid(row=2, column=1, padx=4, pady=8)
+        tb.Button(frame, text="Control API start", command=self._start_socket).grid(row=2, column=0, padx=4, pady=8)
+        tb.Button(frame, text="Control API stop", command=self._stop_socket).grid(row=2, column=1, padx=4, pady=8)
 
     def _build_browser_tab(self, notebook: tb.Notebook) -> None:
         frame = tb.Frame(notebook)
@@ -1153,12 +1104,14 @@ class OpenVibeGUI:
                 self.log_text.delete("1.0", "end")
 
     def _start_socket(self) -> None:
-        self.control_server.start()
-        messagebox.showinfo("Socket", f"Control socket listening on ws://{CONTROL_HOST}:{CONTROL_PORT}")
+        if self.control_server.start():
+            messagebox.showinfo("Control API", f"Control API listening on http://{CONTROL_HOST}:{CONTROL_PORT}")
+        else:
+            messagebox.showerror("Control API", f"Unable to bind control API on {CONTROL_HOST}:{CONTROL_PORT}")
 
     def _stop_socket(self) -> None:
         self.control_server.stop()
-        messagebox.showinfo("Socket", "Control socket server stopped.")
+        messagebox.showinfo("Control API", "Control API server stopped.")
 
     def _refresh_action_state(self) -> None:
         if self.selected_service_name:
@@ -1180,7 +1133,9 @@ class OpenVibeGUI:
 
 def main() -> None:
     backend = OpenVibeBackend()
-    control_server = ControlSocketServer(backend)
+    control_server = LocalControlHTTPServer(backend, CONTROL_HOST, CONTROL_PORT)
+    if not control_server.start():
+        rprint(f"[yellow]Warning: failed to bind local control API on {CONTROL_HOST}:{CONTROL_PORT}. Check if the port is already in use.[/yellow]")
     gui = OpenVibeGUI(backend, control_server)
     gui.run()
 
