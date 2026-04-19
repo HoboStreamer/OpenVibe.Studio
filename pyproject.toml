@@ -1,0 +1,18 @@
+[project]
+name = "openvibe-studio"
+version = "0.1.0"
+description = "Modular OpenVibe Studio GUI and local HTTP control API for Hobo development."
+requires-python = ">=3.11"
+dependencies = [
+  "ttkbootstrap>=1.9.1",
+  "psutil>=5.9.0",
+  "python-dotenv>=1.0.0",
+  "requests>=2.31.0",
+  "pyperclip>=1.8.0",
+  "rich>=13.0.0",
+  "playwright>=1.58.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"

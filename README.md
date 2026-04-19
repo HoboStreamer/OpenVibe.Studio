@@ -26,6 +26,18 @@ python3 -m pip install -r requirements.txt
 python3 main.py
 ```
 
+Or as a package:
+
+```bash
+python3 -m openvibe_studio.app
+```
+
+## Running tests
+
+```bash
+python3 -m unittest discover -s tests
+```
+
 ## Local HTTP control API
 
 The control API binds to `127.0.0.1:8765` and exposes lightweight JSON endpoints for service orchestration, log inspection, health checks, browser probes, discovery, and stack restart.
