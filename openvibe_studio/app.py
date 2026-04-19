@@ -7,7 +7,7 @@ from typing import Any, Callable, Optional
 
 import ttkbootstrap as tb
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, simpledialog
 
 from .api.server import LocalControlHTTPServer
 from .backend import OpenVibeBackend
@@ -106,6 +106,10 @@ class OpenVibeStudioApp:
         tb.Button(action_bar, text="Discover", command=self.on_discover).pack(side="left", padx=2)
         self.service_action_button = tb.Button(action_bar, text="Start", command=self.on_service_toggle, state="disabled")
         self.service_action_button.pack(side="left", padx=2)
+        self.service_reset_button = tb.Button(action_bar, text="Reset DB", command=self.on_reset_db, state="disabled")
+        self.service_reset_button.pack(side="left", padx=2)
+        self.service_grant_admin_button = tb.Button(action_bar, text="Grant Admin", command=self.on_grant_admin, state="disabled")
+        self.service_grant_admin_button.pack(side="left", padx=2)
         tb.Button(action_bar, text="Restart All", command=self.on_restart_all).pack(side="left", padx=2)
         tb.Button(action_bar, text="Kill All", command=self.on_kill_all).pack(side="left", padx=2)
 
@@ -118,9 +122,15 @@ class OpenVibeStudioApp:
         service = self._selected_service()
         if service is None:
             self.service_action_button.configure(text="Start", state="disabled")
+            self.service_reset_button.configure(state="disabled")
+            self.service_grant_admin_button.configure(state="disabled")
             return
         running = self.backend.service_status(service) == "running"
         self.service_action_button.configure(text="Stop" if running else "Start", state="normal")
+        self.service_reset_button.configure(state="normal")
+        self.service_grant_admin_button.configure(
+            state="normal" if service.service_type.lower() in {"hobotools", "hobo-tools"} or service.name.lower() in {"hobotools", "hobo-tools"} else "disabled"
+        )
 
     def on_service_toggle(self) -> None:
         service = self._selected_service()
@@ -147,6 +157,55 @@ class OpenVibeStudioApp:
         self.diagnostics_view.set_service(service_name)
         self.status_label.set(f"Selected {service_name}")
         self._update_service_action_button()
+
+    def on_reset_db(self) -> None:
+        service = self._selected_service()
+        if service is None:
+            return
+        if not messagebox.askyesno(
+            "Reset Database",
+            f"This will delete the database for {service.display_name or service.name} and reset it to a clean state.\n\n" +
+            "You should restart the service after the reset. Continue?",
+        ):
+            return
+
+        def reset_action() -> str:
+            return self.backend.reset_service_database(service)
+
+        def reset_done(result: Any) -> None:
+            self.services_view.refresh()
+            self._update_service_action_button()
+            if isinstance(result, Exception) or str(result).startswith("error:"):
+                messagebox.showerror("Reset Database", f"Database reset failed: {result}")
+                self.status_label.set(f"{service.name}: reset failed")
+            else:
+                messagebox.showinfo("Reset Database", f"Database reset completed: {result}")
+                self.status_label.set(f"{service.name}: reset completed")
+
+        self.task_runner.submit(reset_action, reset_done)
+
+    def on_grant_admin(self) -> None:
+        service = self._selected_service()
+        if service is None:
+            return
+        prompt = simpledialog.askstring("Grant Admin", "Enter username or email to elevate to admin:", parent=self.root)
+        if not prompt:
+            return
+        identifier = prompt.strip()
+        by_email = "@" in identifier
+
+        def grant_action() -> str:
+            return self.backend.grant_service_admin(service, identifier, by_email)
+
+        def grant_done(result: Any) -> None:
+            if isinstance(result, Exception) or str(result).startswith("error:"):
+                messagebox.showerror("Grant Admin", f"Grant admin failed: {result}")
+                self.status_label.set(f"{service.name}: grant failed")
+            else:
+                messagebox.showinfo("Grant Admin", f"Admin privileges granted: {result}")
+                self.status_label.set(f"{service.name}: granted admin")
+
+        self.task_runner.submit(grant_action, grant_done)
 
     def on_refresh_requested(self) -> None:
         self.services_view.refresh()

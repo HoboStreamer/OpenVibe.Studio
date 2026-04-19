@@ -56,7 +56,11 @@ class DummyBackend:
 
     def kill_running_processes(self, service):
         return "killed"
+    def reset_service_database(self, service):
+        return "db_reset"
 
+    def grant_service_admin(self, service, identifier, by_email=False):
+        return f"granted_admin:{identifier}:{'email' if by_email else 'username'}"
     def restart_all_services(self):
         return {"test": "restarted"}
 
@@ -121,6 +125,24 @@ class ControlAPITestCase(unittest.TestCase):
         response = requests.post(f"{self.base_url}/services/test/start?token={self.token}")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["result"], "started")
+
+    def test_reset_service_database(self):
+        response = requests.post(
+            f"{self.base_url}/services/test/reset_db",
+            headers={"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"},
+            json={},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["result"], "db_reset")
+
+    def test_grant_service_admin(self):
+        response = requests.post(
+            f"{self.base_url}/services/test/grant_admin",
+            headers={"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"},
+            json={"identifier": "testuser", "by_email": False},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["result"], "granted_admin:testuser:username")
 
     def test_browser_debug(self):
         response = requests.post(

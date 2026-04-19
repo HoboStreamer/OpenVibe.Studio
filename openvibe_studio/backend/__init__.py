@@ -55,6 +55,14 @@ class OpenVibeBackend:
         env = self.env_manager.load_env(service.resolved_env_path())
         return self.process_manager.restart_service(service, env)
 
+    def reset_service_database(self, service: ServiceDefinition) -> str:
+        env = self.env_manager.load_env(service.resolved_env_path())
+        return self.process_manager.reset_service_database(service, env)
+
+    def grant_service_admin(self, service: ServiceDefinition, identifier: str, by_email: bool = False) -> str:
+        env = self.env_manager.load_env(service.resolved_env_path())
+        return self.process_manager.grant_service_admin(service, identifier, by_email, env)
+
     def find_running_processes(self, service: ServiceDefinition) -> list:
         return self.process_manager.find_running_processes(service)
 

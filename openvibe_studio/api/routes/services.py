@@ -57,4 +57,12 @@ def handle_service_post(backend: Any, service_name: str, action: str, payload: D
         timeout = int(payload.get("timeout", 30))
         interval = float(payload.get("interval", 1.0))
         return {"service": service_name, "result": backend.wait_until_healthy(service, timeout, interval)}
+    if action == "reset_db":
+        return {"service": service_name, "result": backend.reset_service_database(service)}
+    if action == "grant_admin":
+        identifier = payload.get("identifier")
+        if not identifier:
+            return {"service": service_name, "error": "identifier required"}
+        by_email = payload.get("by_email", False)
+        return {"service": service_name, "result": backend.grant_service_admin(service, identifier, by_email)}
     return {"error": "unsupported service action"}

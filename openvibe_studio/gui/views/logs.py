@@ -47,8 +47,28 @@ class LogsView:
 
         lines = max(1, self.lines_var.get())
         content = self.backend.read_log(service, lines)
+        current = self.text.get("1.0", "end")
+        if current == content:
+            self.status.set(f"Showing last {lines} lines for {self.service_name}")
+            return
+
+        try:
+            scroll = self.text.yview()
+            at_bottom = scroll[1] >= 0.99
+        except Exception:
+            scroll = (0.0, 1.0)
+            at_bottom = True
+
         self.text.delete("1.0", "end")
         self.text.insert("1.0", content)
+        try:
+            if at_bottom:
+                self.text.see("end")
+            else:
+                self.text.yview_moveto(scroll[0])
+        except Exception:
+            pass
+
         self.status.set(f"Showing last {lines} lines for {self.service_name}")
 
     def copy(self) -> None:

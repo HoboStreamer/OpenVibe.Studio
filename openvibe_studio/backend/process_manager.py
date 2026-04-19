@@ -244,6 +244,90 @@ class ProcessManager:
         time.sleep(0.5)
         return self.start_service(service, env)
 
+    def _resolve_database_path(self, service: ServiceDefinition, env: Dict[str, str]) -> Optional[Path]:
+        raw_path = env.get('DB_PATH')
+        if raw_path:
+            path = Path(raw_path)
+            if not path.is_absolute():
+                path = service.resolved_path() / path
+            return path.resolve()
+
+        known_paths = [
+            service.resolved_path() / 'data' / 'hobo-tools.db',
+            service.resolved_path() / 'data' / 'hobostreamer.db',
+            service.resolved_path() / 'data' / 'hobostreamer.db',
+            service.resolved_path() / 'data' / f'{service.name}.db',
+        ]
+        for candidate in known_paths:
+            if candidate.exists():
+                return candidate
+
+        data_dir = service.resolved_path() / 'data'
+        if data_dir.exists() and data_dir.is_dir():
+            db_files = list(data_dir.glob('*.db'))
+            if len(db_files) == 1:
+                return db_files[0].resolve()
+
+        return None
+
+    def _run_service_command(self, service: ServiceDefinition, command: list[str], env: Dict[str, str], timeout: int = 60) -> str:
+        executable = command[0]
+        if executable == 'node':
+            node_path = self._resolve_executable('node', env) or executable
+            command = [node_path] + command[1:]
+
+        env_copy = self._normalize_env_for_node_tools(env)
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=str(service.resolved_path()),
+                env=env_copy,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            if completed.returncode != 0:
+                return f'error:{completed.returncode}: {completed.stderr.strip() or completed.stdout.strip()}'
+            return completed.stdout.strip() or 'ok'
+        except Exception as exc:
+            return f'error:{str(exc)}'
+
+    def reset_service_database(self, service: ServiceDefinition, env: Dict[str, str]) -> str:
+        logger.debug('Resetting database for service %s', service.name)
+        self.stop_service(service)
+        script_path = service.resolved_path() / 'server' / 'reset-db.js'
+        if script_path.exists():
+            return self._run_service_command(service, ['node', str(script_path)], env)
+
+        db_path = self._resolve_database_path(service, env)
+        if not db_path:
+            return 'error:db_path_not_found';
+        if not db_path.exists():
+            return f'error:db_not_found:{db_path}'
+
+        try:
+            db_path.unlink()
+            for suffix in ['-wal', '-shm']:
+                journal = Path(f'{db_path}{suffix}')
+                if journal.exists():
+                    journal.unlink()
+            return f'db_reset:{db_path}'
+        except Exception as exc:
+            return f'error:{str(exc)}'
+
+    def grant_service_admin(self, service: ServiceDefinition, identifier: str, by_email: bool, env: Dict[str, str]) -> str:
+        logger.debug('Granting admin role for service %s using %s', service.name, identifier)
+        script_path = service.resolved_path() / 'server' / 'grant-admin.js'
+        if script_path.exists():
+            flag = '--username'
+            if by_email:
+                flag = '--email'
+            elif identifier.isdigit():
+                flag = '--id'
+            return self._run_service_command(service, ['node', str(script_path), flag, identifier], env)
+
+        return 'error:grant_admin_script_missing'
+
     def is_service_running(self, service_name: str) -> bool:
         proc = self.processes.get(service_name)
         if proc and proc.is_running():
